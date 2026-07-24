@@ -1,24 +1,28 @@
-import maplibregl from "maplibre-gl";
+import mapboxgl from "mapbox-gl";
 import type { FeatureCollection, Feature } from "geojson";
 import type { TyphoonData, TrackPoint } from "./types";
 import { intensityOf, radiusForSpeed, agencyColor, powerLabel } from "./intensity";
 import { plainMoveDir } from "./direction";
 import { windCircleRing, stateAtTime, type TrackState } from "./geo";
 import { formatEta, warningMarks, type CityImpact } from "./impact";
+import { CameraController } from "./map/CameraController";
+import { PerformanceController } from "./map/PerformanceController";
+import { StormModelLayer } from "./map/StormModelLayer";
+import type { CameraMode, LayerVisibility, PerformanceTier, RenderFrame, TyphoonScene } from "./map/contracts";
 
 type FC = FeatureCollection;
 
 const EMPTY: FC = { type: "FeatureCollection", features: [] };
 
 /**
- * 把业务内容包进一个「定位外壳」再交给 MapLibre。
+ * 把业务内容包进一个「定位外壳」再交给 Mapbox。
  *
- * MapLibre 依赖 `.maplibregl-marker { position:absolute }` + 内联 transform 把 marker
+ * Mapbox 依赖 `.mapboxgl-marker { position:absolute }` + 内联 transform 把 marker
  * 钉在经纬度上。一旦业务 CSS（如触控热区的 position:relative）命中这个根元素，就会
  * 覆盖定位，使 marker 掉进文档流——高缩放时投影像素分散尚不明显，缩小到世界级时所有
  * 城市投影到近乎同一点，只剩下每个 marker 的堆叠高度，于是排成一条竖线滑向画面底部。
  *
- * 外壳只承担被 MapLibre 定位的职责、不加任何业务样式；所有可视样式与交互都在内层元素。
+ * 外壳只承担被 Mapbox 定位的职责、不加任何业务样式；所有可视样式与交互都在内层元素。
  * 这样无论样式表引入顺序、类名如何演化，都不可能再污染 marker 定位。灾害预警不容错位。
  */
 function markerShell(content: HTMLElement): HTMLElement {
@@ -32,7 +36,7 @@ function markerShell(content: HTMLElement): HTMLElement {
  * 中文底图：高德卫星影像 + 透明中文注记（国内 CDN，行政边界符合中国标准）。
  * 不再使用 glyphs 字体服务，地图文字全部由注记瓦片与 DOM 标记承担。
  */
-const BASE_STYLE: maplibregl.StyleSpecification = {
+const TOKENLESS_DEV_STYLE: mapboxgl.StyleSpecification = {
   version: 8,
   sources: {
     "amap-sat": {
@@ -66,32 +70,71 @@ const BASE_STYLE: maplibregl.StyleSpecification = {
   ],
 };
 
-export class TyphoonMap {
-  readonly map: maplibregl.Map;
-  private eyeMarker: maplibregl.Marker | null = null;
+const DEFAULT_VISIBILITY: LayerVisibility = {
+  model: true,
+  historyTrack: true,
+  forecasts: true,
+  points: true,
+  wind7: true,
+  wind10: true,
+  wind12: true,
+  labels: true,
+  terrain: true,
+};
+
+export class TyphoonMap implements TyphoonScene {
+  readonly map: mapboxgl.Map;
+  private eyeMarker: mapboxgl.Marker | null = null;
   private eyeEl: HTMLDivElement | null = null;
   private data: TyphoonData | null = null;
   private hiddenAgencies = new Set<string>();
-  private dayMarkers: maplibregl.Marker[] = [];
-  private cityMarkers = new Map<string, maplibregl.Marker>();
+  private dayMarkers: mapboxgl.Marker[] = [];
+  private cityMarkers = new Map<string, mapboxgl.Marker>();
   private impacts: CityImpact[] = [];
-  private cityPopup: maplibregl.Popup | null = null;
+  private cityPopup: mapboxgl.Popup | null = null;
   private userInteracted = false;
   private layersReady = false;
+  private currentState: TrackState | null = null;
+  private readonly cameraController: CameraController;
+  private readonly performance = new PerformanceController();
+  private readonly modelLayer: StormModelLayer;
+  private visibility = { ...DEFAULT_VISIBILITY };
+  private lastWindUpdate = 0;
+  private lastPathUpdate = 0;
+  private cachedPathIndex = -1;
+  private cachedPathFeatures: Feature[] = [];
 
   constructor(container: string) {
-    this.map = new maplibregl.Map({
+    const token = import.meta.env.VITE_MAPBOX_TOKEN?.trim();
+    if (!token) {
+      console.error("VITE_MAPBOX_TOKEN 未配置，当前使用 Mapbox 临时开发底图。");
+      queueMicrotask(() => showMapNotice("Mapbox Token 未配置，当前使用临时开发底图"));
+    }
+    mapboxgl.accessToken = token ?? "";
+
+    this.map = new mapboxgl.Map({
       container,
-      style: BASE_STYLE,
+      style: token
+        ? import.meta.env.VITE_MAPBOX_STYLE || "mapbox://styles/mapbox/standard-satellite"
+        : TOKENLESS_DEV_STYLE,
+      projection: "globe",
       center: [138, 18],
-      zoom: 4,
-      attributionControl: { compact: true },
+      zoom: 3.5,
+      pitch: 35,
+      attributionControl: true,
       // 移动端 GPU 敏感：限制像素比、关闭瓦片淡入与过期刷新以省算力
-      pixelRatio: Math.min(window.devicePixelRatio || 1, 2),
       fadeDuration: 0,
       refreshExpiredTiles: false,
     });
-    this.map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
+    this.map.addControl(new mapboxgl.NavigationControl({ showCompass: true }), "bottom-right");
+    this.cameraController = new CameraController(this.map);
+    this.modelLayer = new StormModelLayer(this.map, (available) => {
+      if (this.eyeEl) this.eyeEl.hidden = available;
+    });
+    this.map.on("style.load", () => this.configureMapboxScene());
+    this.map.on("error", (event: { error?: Error }) => {
+      if (event.error) console.error("Mapbox 场景错误", event.error);
+    });
 
     // 仅用户手势(带 originalEvent)才算交互，程序动画不影响首屏取景自愈
     this.map.on("movestart", (e) => {
@@ -103,6 +146,47 @@ export class TyphoonMap {
       this.map.resize();
       this.map.triggerRepaint();
     });
+  }
+
+  initialize(): Promise<void> {
+    return new Promise((resolve) => this.onReady(() => {
+      this.setupLayers();
+      resolve();
+    }));
+  }
+
+  private configureMapboxScene(): void {
+    try {
+      this.map.setProjection("globe");
+      this.map.setFog({
+        color: "rgb(18, 29, 54)",
+        "high-color": "rgb(25, 54, 108)",
+        "horizon-blend": 0.035,
+        "space-color": "rgb(4, 7, 15)",
+        "star-intensity": 0.55,
+      });
+      const lowPower =
+        window.matchMedia("(max-width: 760px), (prefers-reduced-motion: reduce)").matches ||
+        ((navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? 8) <= 4;
+      if (mapboxgl.accessToken && !lowPower && this.visibility.terrain && !this.map.getSource("mapbox-dem")) {
+        this.map.addSource("mapbox-dem", {
+          type: "raster-dem",
+          url: "mapbox://mapbox.mapbox-terrain-dem-v1",
+          tileSize: 512,
+          maxzoom: 14,
+        });
+        this.map.setTerrain({ source: "mapbox-dem", exaggeration: 1.12 });
+      }
+      // Standard 样式切换会清空自定义 Source/Layer，按缓存状态完整恢复。
+      if (this.layersReady) {
+        this.layersReady = false;
+        this.setupLayers();
+        if (this.data) this.setData(this.data);
+        if (this.currentState) this.renderState(this.currentState);
+      }
+    } catch (error) {
+      console.warn("三维大气层或地形初始化失败，继续使用基础 Globe", error);
+    }
   }
 
   private get isSmall(): boolean {
@@ -157,7 +241,13 @@ export class TyphoonMap {
       "track-full", "track-progress", "track-points",
       "forecast-lines", "forecast-points", "pulse",
     ];
-    for (const id of srcs) map.addSource(id, { type: "geojson", data: EMPTY });
+    for (const id of srcs) {
+      if (!map.getSource(id)) map.addSource(id, { type: "geojson", data: EMPTY });
+    }
+
+    // 模型独立于其余业务图层，优先初始化，避免任一后续图层异常使 GLB 永远缺席。
+    this.modelLayer.add();
+    this.modelLayer.setVisible(this.performance.profile.modelEnabled && this.visibility.model);
 
     // —— 风圈（由外到内：7 级 / 10 级 / 12 级）——
     const windSpec: Array<[string, string, number]> = [
@@ -205,10 +295,23 @@ export class TyphoonMap {
     map.addLayer({
       id: "track-points-c", type: "circle", source: "track-points",
       paint: {
-        "circle-radius": ["get", "r"],
+        // 低层级压缩视觉半径，避免点间地理距离收拢后互相遮挡；
+        // 中高层级逐步恢复风速差异，并略微放大以便查看单点详情。
+        "circle-radius": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          2, ["*", ["get", "r"], 0.28],
+          4, ["*", ["get", "r"], 0.46],
+          6, ["*", ["get", "r"], 0.7],
+          8, ["get", "r"],
+          11, ["*", ["get", "r"], 1.12],
+        ],
         "circle-color": ["get", "color"],
         "circle-stroke-color": "rgba(10,15,28,0.9)",
-        "circle-stroke-width": 1.4,
+        "circle-stroke-width": [
+          "interpolate", ["linear"], ["zoom"], 2, 0.5, 5, 0.8, 8, 1.4,
+        ],
         "circle-opacity": 0.95,
       },
     });
@@ -225,11 +328,15 @@ export class TyphoonMap {
     map.addLayer({
       id: "forecast-points-c", type: "circle", source: "forecast-points",
       paint: {
-        "circle-radius": 3.2,
+        "circle-radius": [
+          "interpolate", ["linear"], ["zoom"], 2, 0.9, 4, 1.35, 6, 2.1, 8, 3.2, 11, 3.6,
+        ],
         "circle-color": ["get", "color"],
         "circle-opacity": 0.85,
         "circle-stroke-color": "rgba(10,15,28,0.9)",
-        "circle-stroke-width": 1,
+        "circle-stroke-width": [
+          "interpolate", ["linear"], ["zoom"], 2, 0.4, 5, 0.6, 8, 1,
+        ],
       },
     });
 
@@ -245,18 +352,19 @@ export class TyphoonMap {
       },
     });
 
+    // 交互绑定失败不应阻断核心模型图层初始化。
     this.bindPopups();
   }
 
   private bindPopups(): void {
     const map = this.map;
-    const popup = new maplibregl.Popup({
+    const popup = new mapboxgl.Popup({
       closeButton: false,
       closeOnClick: false,
       offset: 10,
       maxWidth: this.isSmall ? "260px" : "280px",
     });
-    const show = (e: maplibregl.MapLayerMouseEvent) => {
+    const show = (e: mapboxgl.MapLayerMouseEvent) => {
       const f = e.features?.[0];
       if (!f) return;
       map.getCanvas().style.cursor = "pointer";
@@ -272,10 +380,10 @@ export class TyphoonMap {
       map.on("mouseleave", layer, hide);
     }
     // 点击查看详情：以点击点为中心扩一圈查询框，手指点不准也能命中
-    // （路径点视觉半径仅 3–8px，移动端 ±16px 容错约等于 44px 热区）
+    // （低层级路径点会缩小，移动端仍用 ±16px 查询容错维持约 44px 热区）
     const pad = this.isSmall ? 16 : 8;
-    map.on("click", (e) => {
-      const box: [maplibregl.PointLike, maplibregl.PointLike] = [
+    map.on("click", (e: mapboxgl.MapMouseEvent) => {
+      const box: [mapboxgl.PointLike, mapboxgl.PointLike] = [
         [e.point.x - pad, e.point.y - pad],
         [e.point.x + pad, e.point.y + pad],
       ];
@@ -328,13 +436,15 @@ export class TyphoonMap {
         const el = document.createElement("div");
         el.className = "day-label";
         el.textContent = `${parseInt(p.time.slice(5, 7))}月${parseInt(p.time.slice(8, 10))}日`;
-        return new maplibregl.Marker({ element: markerShell(el), anchor: "top", offset: [0, 10] })
+        return new mapboxgl.Marker({ element: markerShell(el), anchor: "top", offset: [0, 10] })
           .setLngLat([p.lng, p.lat])
           .addTo(this.map);
       });
 
     this.updateForecastLayers();
     if (!this.eyeMarker) this.createEyeMarker();
+    this.cachedPathFeatures = [];
+    this.cachedPathIndex = -1;
   }
 
   toggleAgency(agency: string, visible: boolean): void {
@@ -383,7 +493,7 @@ export class TyphoonMap {
         // anchor:center → 圆点几何中心精确钉在城市坐标上。
         // 锚点盒子仅等于圆点本身（地名在 CSS 里绝对定位、不占盒子），
         // 故不会被"圆点在上、地名在下"的竖排高度顶得偏上。见 style.css .city-marker。
-        marker = new maplibregl.Marker({ element: markerShell(btn), anchor: "center" })
+        marker = new mapboxgl.Marker({ element: markerShell(btn), anchor: "center" })
           .setLngLat([im.lng, im.lat])
           .addTo(this.map);
         this.cityMarkers.set(im.name, marker);
@@ -412,7 +522,7 @@ export class TyphoonMap {
     }
     this.cityPopup?.remove();
     // 移动端固定 anchor:bottom（气泡在点位上方展开），从根上避开底部抽屉与时间轴
-    this.cityPopup = new maplibregl.Popup({
+    const popup = new mapboxgl.Popup({
       closeButton: true,
       offset: 30,
       maxWidth: "300px",
@@ -421,9 +531,10 @@ export class TyphoonMap {
       .setLngLat([im.lng, im.lat])
       .setHTML(cityPopupHtml(im))
       .addTo(this.map);
-    this.cityPopup.getElement()
-      .querySelector(".warn-close")
-      ?.addEventListener("click", (e) => {
+    this.cityPopup = popup;
+    popup.getElement()
+      ?.querySelector(".warn-close")
+      ?.addEventListener("click", (e: Event) => {
         e.stopPropagation();
         setWarnBarHidden(true);
         this.cityPopup?.setHTML(cityPopupHtml(im));
@@ -449,12 +560,17 @@ export class TyphoonMap {
         <circle cx="50" cy="50" r="13" fill="none" stroke="currentColor" stroke-width="6"/>
       </svg>`;
     this.eyeEl = el;
-    this.eyeMarker = new maplibregl.Marker({ element: markerShell(el) }).setLngLat([0, 0]).addTo(this.map);
+    el.hidden = this.modelLayer.isAvailable;
+    this.eyeMarker = new mapboxgl.Marker({
+      element: markerShell(el),
+      rotationAlignment: "horizon",
+    }).setLngLat([0, 0]).addTo(this.map);
   }
 
   /** 按插值状态渲染台风本体：眼、风圈、进度轨迹 */
   renderState(state: TrackState): void {
     if (!this.data) return;
+    this.currentState = state;
     const pts = this.data.points;
 
     if (this.eyeMarker && this.eyeEl) {
@@ -466,28 +582,37 @@ export class TyphoonMap {
       this.eyeEl.style.setProperty("--spin-duration", `${dur}s`);
     }
 
-    const windRings: Array<["wind-r7" | "wind-r10" | "wind-r12", TrackState["r7"]]> = [
-      ["wind-r7", state.r7], ["wind-r10", state.r10], ["wind-r12", state.r12],
-    ];
-    for (const [id, quad] of windRings) {
-      this.src(id).setData(
-        quad
-          ? {
-              type: "FeatureCollection",
-              features: [{
-                type: "Feature", properties: {},
-                geometry: { type: "Polygon", coordinates: [windCircleRing(state.lng, state.lat, quad)] },
-              }],
-            }
-          : EMPTY,
-      );
+    const now = performance.now();
+    if (now - this.lastWindUpdate >= this.performance.profile.windUpdateMs) {
+      this.lastWindUpdate = now;
+      const windRings: Array<["wind-r7" | "wind-r10" | "wind-r12", TrackState["r7"]]> = [
+        ["wind-r7", state.r7], ["wind-r10", state.r10], ["wind-r12", state.r12],
+      ];
+      for (const [id, quad] of windRings) {
+        this.src(id).setData(
+          quad
+            ? {
+                type: "FeatureCollection",
+                features: [{
+                  type: "Feature", properties: {},
+                  geometry: { type: "Polygon", coordinates: [windCircleRing(state.lng, state.lat, quad)] },
+                }],
+              }
+            : EMPTY,
+        );
+      }
     }
 
     // 进度轨迹：完整段按强度分段 + 当前插值余段
-    const features: Feature[] = [];
-    for (let i = 0; i < state.index; i++) {
-      features.push(segment(pts[i], pts[i + 1]));
+    if (state.index < this.cachedPathIndex) {
+      this.cachedPathFeatures = [];
+      this.cachedPathIndex = -1;
     }
+    while (this.cachedPathIndex < state.index - 1) {
+      this.cachedPathIndex += 1;
+      this.cachedPathFeatures.push(segment(pts[this.cachedPathIndex], pts[this.cachedPathIndex + 1]));
+    }
+    const features = this.cachedPathFeatures.slice();
     const a = pts[state.index];
     if (state.frac > 0 || state.index === pts.length - 1) {
       features.push({
@@ -496,11 +621,21 @@ export class TyphoonMap {
         geometry: { type: "LineString", coordinates: [[a.lng, a.lat], [state.lng, state.lat]] },
       });
     }
-    this.src("track-progress").setData({ type: "FeatureCollection", features });
+    if (now - this.lastPathUpdate >= this.performance.profile.pathUpdateMs) {
+      this.lastPathUpdate = now;
+      this.src("track-progress").setData({ type: "FeatureCollection", features });
+    }
+    if (this.performance.profile.modelEnabled && this.visibility.model) this.modelLayer.update(state);
+  }
+
+  renderFrame(state: TrackState, frame: RenderFrame): void {
+    this.renderState(state);
+    this.cameraController.update(state, frame.progress);
   }
 
   /** 扩散脉冲动画帧：phase ∈ [0,1) */
   tickPulse(state: TrackState, phase: number): void {
+    if (!this.performance.profile.pulseEnabled) return;
     const color = intensityOf(state.strong).color;
     const features: Feature[] = [0, 0.5].map((offset) => {
       const p = (phase + offset) % 1;
@@ -517,15 +652,75 @@ export class TyphoonMap {
     return stateAtTime(this.data!.points, t);
   }
 
+  setCameraMode(mode: CameraMode): void {
+    this.cameraController.setMode(mode, this.currentState ?? undefined);
+  }
+
+  setPerformanceTier(tier: PerformanceTier): void {
+    this.performance.setTier(tier);
+    const modelVisible = this.visibility.model && this.performance.profile.modelEnabled;
+    if (modelVisible) this.modelLayer.add();
+    this.modelLayer.setVisible(modelVisible);
+    if (!this.performance.profile.terrainEnabled) this.map.setTerrain(null);
+    else if (this.visibility.terrain) this.configureMapboxScene();
+  }
+
+  getPerformanceTier(): PerformanceTier {
+    return this.performance.tier;
+  }
+
+  setLayerVisibility(next: Partial<LayerVisibility>): void {
+    this.visibility = { ...this.visibility, ...next };
+    const groups: Array<[keyof LayerVisibility, string[]]> = [
+      ["historyTrack", ["track-full-line", "track-glow", "track-line"]],
+      ["forecasts", ["forecast-lines-l", "forecast-points-c"]],
+      ["points", ["track-points-c", "pulse-c"]],
+      ["wind7", ["wind-r7-fill", "wind-r7-line"]],
+      ["wind10", ["wind-r10-fill", "wind-r10-line"]],
+      ["wind12", ["wind-r12-fill", "wind-r12-line"]],
+    ];
+    for (const [key, ids] of groups) {
+      if (!(key in next)) continue;
+      for (const id of ids) {
+        if (this.map.getLayer(id)) this.map.setLayoutProperty(id, "visibility", this.visibility[key] ? "visible" : "none");
+      }
+    }
+    if ("labels" in next) {
+      for (const marker of this.dayMarkers) marker.getElement().hidden = !this.visibility.labels;
+    }
+    if ("model" in next) {
+      if (this.visibility.model && this.performance.profile.modelEnabled) this.modelLayer.add();
+      this.modelLayer.setVisible(this.visibility.model && this.performance.profile.modelEnabled);
+    }
+    if ("terrain" in next) {
+      if (!this.visibility.terrain) this.map.setTerrain(null);
+      else this.configureMapboxScene();
+    }
+  }
+
+  resize(): void {
+    this.map.resize();
+  }
+
+  destroy(): void {
+    this.modelLayer.remove();
+    this.map.remove();
+  }
+
   /**
    * 视野覆盖实测 + 全部预报路径。
    * 关键健壮性：手机 webview 首屏地址栏伸缩 / 移动端 DOM 重排后，画布尺寸可能滞后，
-   * 若 padding 超过画布，MapLibre 会静默放弃取景，地图停在错误镜头（看似"缩放失败"）。
+   * 若 padding 超过画布，地图相机可能放弃取景，停在错误镜头（看似“缩放失败”）。
    * 因此：取景前强制同步画布 → padding 按真实 DOM 测量 → 装不下时按比例压缩 → 仍失败则最小 padding 兜底。
    */
   fitToData(): void {
     if (!this.data) return;
-    const bounds = new maplibregl.LngLatBounds();
+    // 跟随/播报模式下，布局尺寸变化只需重算当前运镜，不能跳回全路径总览。
+    if (this.cameraController.currentMode !== "free" && this.currentState) {
+      this.cameraController.update(this.currentState, 1, true);
+      return;
+    }
+    const bounds = new mapboxgl.LngLatBounds();
     for (const p of this.data.points) bounds.extend([p.lng, p.lat]);
     for (const fc of this.data.forecasts) for (const q of fc.points) bounds.extend([q.lng, q.lat]);
 
@@ -603,9 +798,24 @@ export class TyphoonMap {
     window.setTimeout(stop, 12_500);
   }
 
-  private src(id: string): maplibregl.GeoJSONSource {
-    return this.map.getSource(id) as maplibregl.GeoJSONSource;
+  private src(id: string): mapboxgl.GeoJSONSource {
+    return this.map.getSource(id) as mapboxgl.GeoJSONSource;
   }
+}
+
+/** Mapbox 场景统一创建入口。 */
+export function createTyphoonMap(container: string): TyphoonMap {
+  return new TyphoonMap(container);
+}
+
+function showMapNotice(message: string): void {
+  if (document.getElementById("map-engine-notice")) return;
+  const notice = document.createElement("div");
+  notice.id = "map-engine-notice";
+  notice.setAttribute("role", "status");
+  notice.textContent = message;
+  document.body.appendChild(notice);
+  window.setTimeout(() => notice.remove(), 6000);
 }
 
 function segment(a: TrackPoint, b: TrackPoint): Feature {

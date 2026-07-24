@@ -24,6 +24,44 @@
 <body>
   <div id="map"></div>
 
+  <div id="scene-controls" class="scene-controls" aria-label="三维场景控制">
+    <button id="scene-controls-toggle" type="button" aria-expanded="false" aria-controls="scene-controls-panel">图层与镜头</button>
+    <div id="scene-controls-panel" class="scene-controls-panel" hidden>
+      <fieldset>
+        <legend>镜头模式</legend>
+        <div class="segmented-control">
+          <label><input type="radio" name="camera-mode" value="free"><span>自由</span></label>
+          <label><input type="radio" name="camera-mode" value="follow" checked><span>跟随</span></label>
+          <label><input type="radio" name="camera-mode" value="presentation"><span>播报</span></label>
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend>图层</legend>
+        <div class="scene-switch-grid">
+          <label><input type="checkbox" data-scene-layer="model" checked><span>云系模型</span></label>
+          <label><input type="checkbox" data-scene-layer="terrain" checked><span>三维地形</span></label>
+          <label><input type="checkbox" data-scene-layer="historyTrack" checked><span>历史路径</span></label>
+          <label><input type="checkbox" data-scene-layer="forecasts" checked><span>预报路径</span></label>
+          <label><input type="checkbox" data-scene-layer="points" checked><span>路径节点</span></label>
+          <label><input type="checkbox" data-scene-layer="labels" checked><span>日期标注</span></label>
+          <label><input type="checkbox" data-scene-layer="wind7" checked><span>7 级风圈</span></label>
+          <label><input type="checkbox" data-scene-layer="wind10" checked><span>10 级风圈</span></label>
+          <label><input type="checkbox" data-scene-layer="wind12" checked><span>12 级风圈</span></label>
+        </div>
+      </fieldset>
+      <label class="performance-select" for="performance-tier">
+        <span>性能档位</span>
+        <select id="performance-tier">
+          <option value="auto">自动</option>
+          <option value="high">高画质</option>
+          <option value="balanced">均衡</option>
+          <option value="low">省电</option>
+        </select>
+      </label>
+      <p id="performance-hint" class="scene-control-hint" aria-live="polite"></p>
+    </div>
+  </div>
+
   <!-- 顶部标题条 -->
   <header id="topbar">
     <div class="brand">

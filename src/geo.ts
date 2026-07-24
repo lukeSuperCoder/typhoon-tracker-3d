@@ -49,6 +49,53 @@ function lerp(a: number, b: number, f: number): number {
   return a + (b - a) * f;
 }
 
+/** 将经度归一化到 [-180, 180)。 */
+export function normalizeLongitude(lng: number): number {
+  return ((lng + 180) % 360 + 360) % 360 - 180;
+}
+
+/** 沿最短经度方向插值，正确跨越日期变更线。 */
+export function interpolateLongitude(a: number, b: number, f: number): number {
+  const delta = normalizeLongitude(b - a);
+  return normalizeLongitude(a + delta * f);
+}
+
+/** 两点间初始球面方位角（正北为 0°）。 */
+export function bearingBetween(lng1: number, lat1: number, lng2: number, lat2: number): number {
+  const φ1 = lat1 * D2R;
+  const φ2 = lat2 * D2R;
+  const dλ = normalizeLongitude(lng2 - lng1) * D2R;
+  const y = Math.sin(dλ) * Math.cos(φ2);
+  const x = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(dλ);
+  return (Math.atan2(y, x) * R2D + 360) % 360;
+}
+
+/** 球面大圆插值；极短距离退化为经纬度最短路径插值。 */
+export function interpolateGreatCircle(
+  lng1: number,
+  lat1: number,
+  lng2: number,
+  lat2: number,
+  f: number,
+): [number, number] {
+  const φ1 = lat1 * D2R;
+  const λ1 = lng1 * D2R;
+  const φ2 = lat2 * D2R;
+  const λ2 = (lng1 + normalizeLongitude(lng2 - lng1)) * D2R;
+  const cosDelta = Math.min(1, Math.max(-1,
+    Math.sin(φ1) * Math.sin(φ2) + Math.cos(φ1) * Math.cos(φ2) * Math.cos(λ2 - λ1),
+  ));
+  const delta = Math.acos(cosDelta);
+  if (delta < 1e-8) return [interpolateLongitude(lng1, lng2, f), lerp(lat1, lat2, f)];
+  const sinDelta = Math.sin(delta);
+  const a = Math.sin((1 - f) * delta) / sinDelta;
+  const b = Math.sin(f * delta) / sinDelta;
+  const x = a * Math.cos(φ1) * Math.cos(λ1) + b * Math.cos(φ2) * Math.cos(λ2);
+  const y = a * Math.cos(φ1) * Math.sin(λ1) + b * Math.cos(φ2) * Math.sin(λ2);
+  const z = a * Math.sin(φ1) + b * Math.sin(φ2);
+  return [normalizeLongitude(Math.atan2(y, x) * R2D), Math.atan2(z, Math.hypot(x, y)) * R2D];
+}
+
 function lerpQuad(a: Quad | null, b: Quad | null, f: number): Quad | null {
   if (a && b) return [lerp(a[0], b[0], f), lerp(a[1], b[1], f), lerp(a[2], b[2], f), lerp(a[3], b[3], f)];
   return f < 0.5 ? a : b;
@@ -78,15 +125,23 @@ export function stateAtTime(points: TrackPoint[], t: number): TrackState {
   if (t <= first.t) return { ...pick(first), index: 0, frac: 0 };
   if (t >= last.t) return { ...pick(last), index: points.length - 1, frac: 0 };
 
-  let i = 0;
-  while (i < points.length - 2 && points[i + 1].t <= t) i++;
+  // 二分查找区间左端点，避免长历史轨迹每帧线性扫描。
+  let low = 0;
+  let high = points.length - 2;
+  while (low <= high) {
+    const mid = (low + high) >>> 1;
+    if (points[mid + 1].t <= t) low = mid + 1;
+    else high = mid - 1;
+  }
+  const i = low;
   const a = points[i];
   const b = points[i + 1];
   const f = (t - a.t) / (b.t - a.t);
   const disc = f < 0.5 ? a : b;
+  const [lng, lat] = interpolateGreatCircle(a.lng, a.lat, b.lng, b.lat, f);
   return {
-    lng: lerp(a.lng, b.lng, f),
-    lat: lerp(a.lat, b.lat, f),
+    lng,
+    lat,
     speed: lerp(a.speed, b.speed, f),
     pressure: lerp(a.pressure, b.pressure, f),
     strong: disc.strong,

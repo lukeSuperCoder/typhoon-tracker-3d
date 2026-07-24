@@ -1,7 +1,7 @@
 # Typhoon Bavi Tracker · 巴威台风实时路径追踪
 
 2026 年第 9 号台风「巴威 BAVI」实时路径追踪与多机构预报对比系统。
-边缘架构：**Cloudflare Worker（数据代理 + 缓存 + 双源容灾） + MapLibre GL 动效前端**。
+边缘架构：**Cloudflare Worker（数据代理 + 缓存 + 双源容灾） + Mapbox GL JS 三维动效前端**。
 
 > 人类正面对天灾。一个人力量有限，众志成城，总会集结智慧对抗天灾。
 > 欢迎提 Issue / PR 共建，转发给需要的人，提前预防，减少灾情影响。
@@ -43,7 +43,7 @@ git push -u origin main
 |---|---|
 | APScheduler 每小时抓取 | 用户请求触发 + 边缘缓存 5 分钟（数据源本身 3 小时一报） |
 | CSV/SQLite 存储去重 | 数据源返回全量历史轨迹，无需自建存储 |
-| matplotlib 静态图 | MapLibre GL 实时渲染 + 路径回放动画 |
+| matplotlib 静态图 | Mapbox GL JS Globe 实时渲染 + 路径回放动画 |
 | requests 重试/超时 | Worker 内置超时 + 主备双数据源自动切换 |
 
 ## 数据源（已实测验证）
@@ -88,10 +88,10 @@ git push -u origin main
 
 ## 性能说明
 
-- MapLibre 独立分包（`manualChunks`），首屏与地图库并行加载
+- Mapbox 独立分包（`manualChunks`），首屏与地图库并行加载
 - 台风 API `preload`，资讯面板延迟 2.5s 加载，不阻塞地图
 - 页面不可见时暂停动画循环，降低后台 CPU
-- **已移除** 国外 CARTO 底图与 MapLibre 字体服务，消除控制台报错
+- Mapbox Standard Satellite 提供三维卫星底图、Globe 和大气层
 
 ## 本地开发
 
@@ -124,7 +124,7 @@ npm run deploy     # 构建 + 发布到 Cloudflare Workers
 │   └── news.ts        # 资讯 RSS 聚合
 ├── src/
 │   ├── app.ts         # 前端入口：回放、HUD、分享、倒计时
-│   ├── map.ts         # MapLibre 图层（高德底图）
+│   ├── map.ts         # Mapbox Globe 场景与业务图层
 │   ├── impact.ts      # 城市波及倒计时算法
 │   ├── geo.ts         # 球面几何
 │   ├── guide.ts       # 应对指南

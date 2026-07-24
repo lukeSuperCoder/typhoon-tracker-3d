@@ -1,7 +1,9 @@
-import "maplibre-gl/dist/maplibre-gl.css";
+import "mapbox-gl/dist/mapbox-gl.css";
 import "./style.css";
-import { TyphoonMap } from "./map";
+import { createTyphoonMap } from "./map";
+import type { CameraMode, LayerVisibility, PerformanceTier } from "./map/contracts";
 import type { TyphoonData } from "./types";
+import { createDevTyphoonData } from "./mock-data";
 import { intensityOf, INTENSITY_ORDER, agencyColor, powerValue, powerUnit } from "./intensity";
 import { renderGuide, openGuideModal, setGuideContext } from "./guide";
 import { initNews, refreshNews } from "./news";
@@ -14,105 +16,14 @@ import { initMusic } from "./music";
 import { initMobile, isMobile, syncAlertBannerHost } from "./mobile";
 import { plainMoveDir } from "./direction";
 import { computeImpacts, formatEta, CITIES, MY_LOCATION, type City, type CityImpact } from "./impact";
+import { PlaybackEngine } from "./animation/PlaybackEngine";
 
 const TYPHOON_ID = "202609"; // 2026 年第 9 号台风 巴威 BAVI
 const REFRESH_MS = 5 * 60 * 1000;
 
 const $ = <T extends HTMLElement>(sel: string): T => document.querySelector(sel) as T;
 
-const tmap = new TyphoonMap("map");
-
-/** ———— 回放控制器 ———— */
-class Playback {
-  playing = false;
-  t = 0;
-  t0 = 0;
-  t1 = 0;
-  hoursPerSec = 6;
-  private raf = 0;
-  private lastFrame = 0;
-  private pulsePhase = 0;
-  private pulseAccum = 0;
-  private reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-
-  constructor(private onFrame: (t: number) => void) {}
-
-  setRange(t0: number, t1: number): void {
-    this.t0 = t0;
-    this.t1 = t1;
-    this.t = Math.min(Math.max(this.t, t0), t1);
-  }
-
-  seek(t: number): void {
-    this.t = Math.min(Math.max(t, this.t0), this.t1);
-    this.onFrame(this.t);
-  }
-
-  play(): void {
-    if (this.playing) return;
-    this.playing = true;
-    if (this.t >= this.t1 - 1000) this.t = this.t0; // 从头回放
-    this.lastFrame = performance.now();
-    document.body.classList.add("is-playing");
-    tmap.setForecastDim(true);
-    // 推进由 start() 的常驻 rAF 循环统一驱动，避免双重循环
-  }
-
-  pause(atEnd = false): void {
-    this.playing = false;
-    document.body.classList.remove("is-playing");
-    tmap.setForecastDim(false);
-    if (atEnd) this.t = this.t1;
-    this.onFrame(this.t);
-  }
-
-  toggle(): void {
-    this.playing ? this.pause() : this.play();
-  }
-
-  /** 常驻动画循环：回放推进 + 脉冲扩散；页面不可见时暂停以省资源 */
-  start(): void {
-    cancelAnimationFrame(this.raf);
-    this.lastFrame = performance.now();
-    document.addEventListener("visibilitychange", this.onVis);
-    this.loop();
-  }
-
-  private onVis = (): void => {
-    if (!document.hidden) this.lastFrame = performance.now();
-  };
-
-  private loop = (): void => {
-    this.raf = requestAnimationFrame(this.loop);
-    if (document.hidden) return;
-    const now = performance.now();
-    const dt = Math.min(100, now - this.lastFrame);
-    this.lastFrame = now;
-
-    if (this.playing) {
-      this.t += dt * this.hoursPerSec * 3.6e3; // ms(现实) -> ms(台风时间)
-      if (this.t >= this.t1) {
-        this.pause(true);
-      } else {
-        this.onFrame(this.t);
-      }
-    }
-
-    // 脉冲动画：偏好减少动态时关闭；否则节流到 ~30fps 降低移动端 GPU 负担
-    if (!this.reduceMotion) {
-      this.pulsePhase = (this.pulsePhase + dt / 2600) % 1;
-      this.pulseAccum += dt;
-      if (this.pulseAccum >= 33) {
-        this.pulseAccum = 0;
-        try {
-          tmap.tickPulse(tmap.stateAt(this.t), this.pulsePhase);
-        } catch {
-          /* 数据未就绪 */
-        }
-      }
-    }
-  };
-}
+const tmap = createTyphoonMap("map");
 
 let data: TyphoonData | null = null;
 let latestImpacts: CityImpact[] = [];
@@ -246,18 +157,32 @@ function updateAlertBanner(impacts: CityImpact[]): void {
   syncAlertBannerHost();
 }
 
-const playback = new Playback((t) => {
-  if (!data) return;
-  const state = tmap.stateAt(t);
-  tmap.renderState(state);
-  updateHud(state.time, state.speed, state.pressure, state.power, state.strong, state.moveDir, state.moveSpeed, state.lng, state.lat);
-  const ratio = (t - playback.t0) / (playback.t1 - playback.t0 || 1);
-  ($("#scrubber") as HTMLInputElement).value = String(Math.round(ratio * 1000));
-  $("#t-current").textContent = state.time.slice(5);
+const playback = new PlaybackEngine({
+  onFrame: (frame) => {
+    if (!data) return;
+    const state = tmap.stateAt(frame.currentTime);
+    tmap.renderFrame(state, {
+      time: frame.currentTime,
+      progress: frame.progress,
+      playing: frame.status === "playing",
+      deltaMs: frame.deltaMs,
+    });
+    tmap.setForecastDim(frame.status === "playing");
+    updateHud(state.time, state.speed, state.pressure, state.power, state.strong, state.moveDir, state.moveSpeed, state.lng, state.lat);
+    ($("#scrubber") as HTMLInputElement).value = String(Math.round(frame.progress * 1000));
+    $("#t-current").textContent = state.time.slice(5);
+  },
+  onPulse: (phase) => {
+    if (!data) return;
+    tmap.tickPulse(tmap.stateAt(playback.t), phase);
+  },
+  speed: 2,
 });
 
 /** ———— 数据获取 ———— */
 async function fetchData(): Promise<TyphoonData> {
+  if (import.meta.env.DEV) return createDevTyphoonData();
+
   const res = await fetch(`/api/typhoon/${TYPHOON_ID}`, { signal: AbortSignal.timeout(15000) });
   if (!res.ok) throw new Error(`API ${res.status}`);
   const body = (await res.json()) as TyphoonData & { error?: string };
@@ -424,8 +349,9 @@ function wireControls(): void {
 
   const scrubber = $("#scrubber") as HTMLInputElement;
   scrubber.addEventListener("input", () => {
-    playback.pause();
     const ratio = Number(scrubber.value) / 1000;
+    // 先读取用户输入再暂停；pause() 会同步回写当前帧，若顺序相反会把滑块重置到旧位置。
+    playback.pause();
     playback.seek(playback.t0 + ratio * (playback.t1 - playback.t0));
   });
 
@@ -435,6 +361,42 @@ function wireControls(): void {
       btn.classList.add("active");
       playback.hoursPerSec = Number(btn.dataset.speed);
     });
+  });
+
+  const sceneToggle = $("#scene-controls-toggle") as HTMLButtonElement;
+  const scenePanel = $("#scene-controls-panel");
+  sceneToggle.addEventListener("click", () => {
+    const open = scenePanel.hidden;
+    scenePanel.hidden = !open;
+    sceneToggle.setAttribute("aria-expanded", String(open));
+  });
+
+  document.querySelectorAll<HTMLInputElement>('input[name="camera-mode"]').forEach((control) => {
+    control.addEventListener("change", () => {
+      if (control.checked) tmap.setCameraMode(control.value as CameraMode);
+    });
+  });
+
+  document.querySelectorAll<HTMLInputElement>("[data-scene-layer]").forEach((control) => {
+    control.addEventListener("change", () => {
+      const layer = control.dataset.sceneLayer as keyof LayerVisibility;
+      tmap.setLayerVisibility({ [layer]: control.checked });
+    });
+  });
+
+  const performanceSelect = $("#performance-tier");
+  const performanceHint = $("#performance-hint");
+  const updatePerformanceHint = (): void => {
+    performanceHint.textContent = `当前：${tmap.getPerformanceTier() === "high" ? "高画质" : tmap.getPerformanceTier() === "balanced" ? "均衡" : "省电"}`;
+  };
+  updatePerformanceHint();
+  performanceSelect.addEventListener("change", (event) => {
+    const value = (event.currentTarget as unknown as { value: string }).value;
+    const tier = value === "auto"
+      ? (window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "low" : "balanced")
+      : value as PerformanceTier;
+    tmap.setPerformanceTier(tier);
+    updatePerformanceHint();
   });
 
   document.addEventListener("keydown", (e) => {
@@ -562,8 +524,22 @@ async function initialLoad(): Promise<void> {
 }
 
 /** ———— 离线可用 ———— */
-// 台风天网络最不可靠，SW 缓存最近一次数据：断网也能看倒计时、指南和紧急电话
-if ("serviceWorker" in navigator) {
+// 开发环境绝不能被生产 SW 的缓存优先策略控制，否则 HMR/源码请求会长期命中旧版本。
+if (import.meta.env.DEV && "serviceWorker" in navigator) {
+  const resetKey = "bavi:dev-sw-reset";
+  void Promise.all([
+    navigator.serviceWorker.getRegistrations().then((items) => Promise.all(items.map((item) => item.unregister()))),
+    caches.keys().then((keys) => Promise.all(keys.filter((key) => key.startsWith("bavi-")).map((key) => caches.delete(key)))),
+  ]).then(() => {
+    if (!navigator.serviceWorker.controller || sessionStorage.getItem(resetKey)) {
+      sessionStorage.removeItem(resetKey);
+      return;
+    }
+    sessionStorage.setItem(resetKey, "1");
+    window.location.reload();
+  });
+// 台风天网络最不可靠，生产环境用 SW 缓存最近一次数据。
+} else if ("serviceWorker" in navigator) {
   // 已有旧 SW 时记录下来：新版本 skipWaiting+claim 接管后自动刷新一次，
   // 让存量用户无需手动清缓存即可拿到最新修复（首次访问无旧 SW 则不刷新，避免无谓重载）。
   const hadController = !!navigator.serviceWorker.controller;

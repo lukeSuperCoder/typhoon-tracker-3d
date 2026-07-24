@@ -72,7 +72,7 @@
 :focus:not(:focus-visible) { outline: none; }
 
 /* 小尺寸按钮统一用伪元素扩热区：视觉不变，指尖容错 ≥44px。
-   注意：.city-marker 由 MapLibre 强制 position:absolute 定位（转译到经纬度），
+   注意：.city-marker 由 Mapbox 强制 position:absolute 定位（转译到经纬度），
    绝不能在此覆盖成 relative，否则 marker 会掉进文档流、被整块 canvas 挤到画面底部。
    absolute 本身也是其 ::after 的定位上下文，热区照常生效。 */
 .warn-close, .loc-clear, .gm-close, .share-close, #hud-close, #drawer-close {
@@ -107,6 +107,107 @@ body {
   position: absolute; inset: 0;
   pointer-events: none;
   box-shadow: inset 0 0 180px 60px rgba(4, 7, 15, 0.55);
+}
+
+/* ———— 三维场景控制（地图叠加层）———— */
+.scene-controls {
+  position: fixed;
+  z-index: var(--z-ui);
+  top: 76px;
+  right: 22px;
+  width: 286px;
+  pointer-events: auto;
+}
+body.drawer-open .scene-controls { right: 382px; }
+#scene-controls-toggle {
+  display: block;
+  margin-left: auto;
+  min-height: 38px;
+  padding: 8px 13px;
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  background: rgba(13, 20, 38, 0.92);
+  color: var(--ink);
+  font: 600 var(--fs-13) var(--sans);
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+}
+#scene-controls-toggle[aria-expanded="true"] { border-color: rgba(94, 176, 255, 0.6); }
+.scene-controls-panel {
+  margin-top: 8px;
+  padding: 12px;
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  background: rgba(13, 20, 38, 0.95);
+  color: var(--ink);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.24);
+  backdrop-filter: blur(12px);
+}
+.scene-controls-panel fieldset { border: 0; }
+.scene-controls-panel fieldset + fieldset { margin-top: 12px; }
+.scene-controls-panel legend {
+  margin-bottom: 7px;
+  color: var(--ink-dim);
+  font-size: var(--fs-12);
+  font-weight: 600;
+}
+.segmented-control { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+.segmented-control label { position: relative; }
+.segmented-control input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+.segmented-control span {
+  display: block;
+  padding: 7px 6px;
+  border: 1px solid var(--panel-border);
+  border-radius: 5px;
+  color: var(--ink-dim);
+  text-align: center;
+  font-size: var(--fs-12);
+  cursor: pointer;
+}
+.segmented-control input:checked + span {
+  border-color: var(--link);
+  background: rgba(64, 158, 255, 0.18);
+  color: #fff;
+}
+.segmented-control input:focus-visible + span { outline: 2px solid var(--info-strong); outline-offset: 2px; }
+.scene-switch-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px 10px; }
+.scene-switch-grid label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 30px;
+  color: var(--ink-dim);
+  font-size: var(--fs-12);
+  cursor: pointer;
+}
+.scene-switch-grid input { accent-color: #409eff; }
+.performance-select {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  color: var(--ink-dim);
+  font-size: var(--fs-12);
+}
+.performance-select select {
+  min-height: 32px;
+  border: 1px solid var(--panel-border);
+  border-radius: 5px;
+  padding: 4px 26px 4px 8px;
+  background: var(--panel-solid);
+  color: var(--ink);
+}
+.scene-control-hint {
+  min-height: 1.4em;
+  margin-top: 7px;
+  color: var(--ink-faint);
+  font-size: var(--fs-11);
 }
 
 /* ———— 顶部标题条 ———— */
@@ -454,7 +555,7 @@ body.is-playing .play-btn .icon-pause { display: block; }
 @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
 
 /* ———— Popup ———— */
-.maplibregl-popup-content {
+.mapboxgl-popup-content {
   background: var(--panel) !important;
   border: 1px solid var(--panel-border);
   border-radius: var(--radius-md) !important;
@@ -463,7 +564,7 @@ body.is-playing .play-btn .icon-pause { display: block; }
   color: var(--ink);
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5) !important;
 }
-.maplibregl-popup-tip { border-top-color: rgba(13, 20, 38, 0.9) !important; border-bottom-color: rgba(13, 20, 38, 0.9) !important; }
+.mapboxgl-popup-tip { border-top-color: rgba(13, 20, 38, 0.9) !important; border-bottom-color: rgba(13, 20, 38, 0.9) !important; }
 
 .tip-head {
   display: flex; align-items: center; gap: 7px;
@@ -511,16 +612,16 @@ body.is-playing .play-btn .icon-pause { display: block; }
 }
 
 /* ———— 地图控件适配深色 ———— */
-.maplibregl-ctrl-group {
+.mapboxgl-ctrl-group {
   background: var(--panel) !important;
   border: 1px solid var(--panel-border);
 }
-.maplibregl-ctrl-group button { filter: invert(0.85); }
-.maplibregl-ctrl-attrib {
+.mapboxgl-ctrl-group button { filter: invert(0.85); }
+.mapboxgl-ctrl-attrib {
   background: rgba(10, 15, 28, 0.6) !important;
   font-size: var(--fs-10);
 }
-.maplibregl-ctrl-attrib a { color: var(--ink-faint) !important; }
+.mapboxgl-ctrl-attrib a { color: var(--ink-faint) !important; }
 
 /* ———— 顶栏右侧：分享 ———— */
 .topbar-right { display: flex; align-items: center; gap: 10px; pointer-events: auto; }
@@ -715,11 +816,11 @@ body.is-playing .play-btn .icon-pause { display: block; }
 body.share-open { overflow: hidden; }
 
 /* ———— 城市波及标记与倒计时 ———— */
-/* marker 定位外壳：仅被 MapLibre 定位，绝不加尺寸/边距/定位副作用（见 map.ts markerShell）。
+/* marker 定位外壳：仅被 Mapbox 定位，绝不加尺寸/边距/定位副作用（见 map.ts markerShell）。
    默认不拦截指针，保证在装饰性标记（台风眼/日期）上仍可拖拽地图；可交互内层自行开启。 */
 .mk-shell { line-height: 0; pointer-events: none; }
 .city-marker {
-  position: relative; /* ::after 触控热区 + 绝对定位地名的定位上下文；内层元素，不影响 MapLibre 外壳 */
+  position: relative; /* ::after 触控热区 + 绝对定位地名的定位上下文；内层元素，不影响 Mapbox 外壳 */
   pointer-events: auto;
   display: flex;
   background: transparent;
@@ -1551,6 +1652,13 @@ body.drawer-open #drawer-open { display: none; }
    移动端（≤760px）：地图全屏 + 顶部常驻实况条 + 底部三档位抽屉
 ——————————————————————————————————————— */
 @media (max-width: 760px) {
+  .scene-controls {
+    top: 108px;
+    right: 12px;
+    width: min(286px, calc(100vw - 24px));
+  }
+  body.drawer-open .scene-controls { right: 12px; }
+  .scene-controls-panel { max-height: min(58vh, 430px); overflow: auto; }
   body { font-size: var(--fs-14); }
 
   /* 顶栏：单行不换行，空间锁死 */
@@ -1837,10 +1945,10 @@ body.drawer-open #drawer-open { display: none; }
   #slogan { display: none; }
 
   /* 精简地图控件，避免与时间轴/抽屉冲突 */
-  .maplibregl-ctrl-bottom-right { display: none; }
+  .mapboxgl-ctrl-bottom-right { display: none; }
 
   /* 弹窗更贴合窄屏 */
-  .maplibregl-popup { max-width: calc(100vw - 24px) !important; }
+  .mapboxgl-popup { max-width: calc(100vw - 24px) !important; }
 }
 
 /* ———— 手机横屏矮视口：压缩上下留白，保住地图可视高度 ———— */
@@ -1864,4 +1972,20 @@ body.drawer-open #drawer-open { display: none; }
   #alert-banner { animation: none; }
   #drawer, #hud, .share-modal, .share-card { transition: none; }
   #guide-modal, #origin-modal { animation: none; }
+}
+/* 地图引擎配置异常时使用短暂状态条，不阻塞业务面板。 */
+#map-engine-notice {
+  position: fixed;
+  z-index: 80;
+  top: 64px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: min(460px, calc(100vw - 32px));
+  padding: 9px 14px;
+  border: 1px solid rgba(255, 210, 63, 0.45);
+  border-radius: 6px;
+  background: rgba(18, 29, 54, 0.95);
+  color: #fff1b8;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  font-size: 13px;
 }

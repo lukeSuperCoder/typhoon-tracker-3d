@@ -74,7 +74,7 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  用户浏览器（MapLibre GL + TypeScript）                        │
+│  用户浏览器（Mapbox GL JS + TypeScript）                       │
 │  · 路径回放 / 风圈动画 / 城市标记 / HUD / 分享深链            │
 └──────────────────────────┬──────────────────────────────────┘
                            │ /api/typhoon/:id  /api/news
@@ -96,7 +96,7 @@
 | 层级 | 选型 | 为什么 |
 |------|------|------|
 | 边缘计算 | Cloudflare Workers | 零运维、全球 CDN、国内可访问 |
-| 前端地图 | MapLibre GL | 开源、灵活，不依赖 Google |
+| 前端地图 | Mapbox GL JS | Globe、三维地形与 Standard Satellite |
 | 底图 | 高德卫星 + 中文注记 | 国内 CDN 稳，中文标注，合规踏实 |
 | 构建 | Vite + TypeScript | 快，且类型兜底 |
 | 数据 | 无数据库 | 源站返回全量轨迹，边缘缓存就够了 |
@@ -111,7 +111,7 @@ worker/
 
 src/
   app.ts         # 入口：回放控制、HUD、分享、倒计时刷新
-  map.ts         # MapLibre 图层、城市标记、风圈动画
+  map.ts         # Mapbox Globe、城市标记、风圈动画
   impact.ts      # 城市波及倒计时算法（纯函数）
   geo.ts         # 球面距离、风圈多边形、轨迹插值
   guide.ts       # 应对指南内容
