@@ -1,22 +1,50 @@
-# Typhoon Bavi Tracker · 巴威台风实时路径追踪
+# Typhoon Tracker 3D · 巴威台风三维路径追踪
 
 2026 年第 9 号台风「巴威 BAVI」实时路径追踪与多机构预报对比系统。
 边缘架构：**Cloudflare Worker（数据代理 + 缓存 + 双源容灾） + Mapbox GL JS 三维动效前端**。
 
+本项目在原有 `typhoon-bavi-tracker` 的实时数据、城市波及倒计时、资讯与防灾指南等能力之上，
+**完成了三维可视化升级：加入 Globe 地球场景、台风三维模型、镜头模式、业务图层控制与分级性能策略，
+同时优化桌面端布局、回放架构、本地开发体验和国内底图访问**。
+
 > 人类正面对天灾。一个人力量有限，众志成城，总会集结智慧对抗天灾。
 > 欢迎提 Issue / PR 共建，转发给需要的人，提前预防，减少灾情影响。
 
-**线上访问：https://chinaupdated.com**
+**线上访问：https://typhoon-tracker-3d.lc970820.workers.dev**
 
-![截屏](image.png)
+> 访问说明：项目暂未注册独立域名，当前使用 Cloudflare Workers 默认域名，中国大陆网络可能无法直接访问，可能需要使用网络代理。
+
+![截屏1](docs/screenshots/06-3d-map.png)
+![截屏2](docs/screenshots/07-3d-view.png)
 
 
+## 基于原项目的升级
+
+本仓库保留了原项目的主要产品能力，包括官方公开数据聚合、主备数据源容灾、历史路径与多机构预报、
+7/10/12 级风圈、城市影响时间估算、新闻与防灾指南、分享和 PWA 离线支持。在此基础上主要增加和优化了：
+
+### 三维场景与可视化
+
+- 从 MapLibre 二维地图升级为 **Mapbox GL JS Globe 三维地球场景**
+- 增加台风三维模型与云层视觉效果，使风暴中心和移动过程更直观
+- 增加自动跟随、自由浏览等镜头模式，统一管理镜头移动与回放状态
+- 支持地形、历史路径、预报路径、观测点、三级风圈和标签等图层独立开关
+- 保留高德卫星影像与中文注记，改善国内网络环境下的底图访问和中文信息展示
+
+### 交互与架构优化
+
+- 将路径回放抽离为独立 `PlaybackEngine`，统一处理播放、暂停、拖拽、倍速和脉冲动画
+- 修复拖动时间轴时被旧帧回写的问题，提升回放控制的稳定性
+- 增加高画质、均衡、省电三级性能策略，并兼容系统“减少动态效果”偏好
+- 页面进入后台时暂停动画，降低不必要的 CPU/GPU 消耗
+- 优化桌面端控制抽屉的尺寸、位置与居中布局，减少对三维地图的遮挡
+- 开发环境提供模拟台风数据，并自动清理生产 Service Worker 缓存，避免旧缓存干扰热更新
 
 ## 快速开始（克隆与部署）
 
 ```bash
-git clone git@github.com:Trade-Offf/typhoon-bavi-tracker.git
-cd typhoon-bavi-tracker
+git clone https://github.com/lukeSuperCoder/typhoon-tracker-3d.git
+cd typhoon-tracker-3d
 npm install
 npm run dev        # 本地开发
 npm run deploy     # 构建并发布到 Cloudflare Workers
@@ -25,7 +53,7 @@ npm run deploy     # 构建并发布到 Cloudflare Workers
 首次推送到 GitHub（维护者）：
 
 ```bash
-git remote add origin git@github.com:Trade-Offf/typhoon-bavi-tracker.git
+git remote add origin https://github.com/lukeSuperCoder/typhoon-tracker-3d.git
 git branch -M main
 git push -u origin main
 ```
@@ -57,8 +85,8 @@ git push -u origin main
 
 ## 线上地址
 
-- 正式域名：https://chinaupdated.com （及 www.chinaupdated.com）
-- 备用地址：https://typhoon-bavi-tracker.surgethisworld.workers.dev
+- 当前地址：https://typhoon-tracker-3d.lc970820.workers.dev
+- 访问说明：暂未注册独立域名，中国大陆网络可能无法直连，可能需要使用网络代理
 
 ## 功能
 
@@ -76,7 +104,7 @@ git push -u origin main
 - 左侧面板列表 + 地图可点击城市标记
 - 顶部信息条（或受大风影响 / 距影响约 N 小时 · 估算）
 - 分级行动建议：>48h 关注 → 24–48h 采买 → 12–24h 加固 → <12h 停止外出
-- **分享深链**：`https://chinaupdated.com/?city=温州` 打开即聚焦该城市倒计时
+- **分享深链**：`https://typhoon-tracker-3d.lc970820.workers.dev/?city=温州` 打开即聚焦该城市倒计时
 
 ### 信息与传播
 - 右侧抽屉：实时资讯 + 台风应对指南（五段式清单 + 紧急电话）
@@ -86,11 +114,19 @@ git push -u origin main
 
 > 关于小红书：其内容接口需要登录态与签名，服务端匿名抓取不可行。当前以聚合新闻 + 话题深链替代。
 
+### 三维场景控制
+
+- Globe 地球投影、大气层与三维地形
+- 台风三维模型跟随实时位置和路径回放移动
+- 自动跟随 / 自由浏览镜头模式
+- 历史路径、机构预报、观测点、7/10/12 级风圈、标签与地形按需开关
+- 高画质 / 均衡 / 省电性能档位
+
 ## 性能说明
 
 - Mapbox 独立分包（`manualChunks`），首屏与地图库并行加载
 - 台风 API `preload`，资讯面板延迟 2.5s 加载，不阻塞地图
-- 页面不可见时暂停动画循环，降低后台 CPU
+- 页面不可见时暂停动画循环，三级性能策略按设备能力调整渲染开销
 - 高德国内 CDN 提供卫星影像与中文注记，Mapbox GL JS 提供 Globe、大气层和可选 DEM 地形
 
 ## 本地开发
@@ -125,6 +161,8 @@ npm run deploy     # 构建 + 发布到 Cloudflare Workers
 ├── src/
 │   ├── app.ts         # 前端入口：回放、HUD、分享、倒计时
 │   ├── map.ts         # Mapbox Globe 场景与业务图层
+│   ├── animation/     # 路径回放引擎与状态类型
+│   ├── map/           # 镜头、性能与三维台风模型控制器
 │   ├── impact.ts      # 城市波及倒计时算法
 │   ├── geo.ts         # 球面几何
 │   ├── guide.ts       # 应对指南
@@ -139,8 +177,8 @@ npm run deploy     # 构建 + 发布到 Cloudflare Workers
 ## 参与共建
 
 ```bash
-git clone git@github.com:Trade-Offf/typhoon-bavi-tracker.git
-cd typhoon-bavi-tracker
+git clone https://github.com/lukeSuperCoder/typhoon-tracker-3d.git
+cd typhoon-tracker-3d
 npm install && npm run dev
 ```
 
