@@ -4,8 +4,9 @@ import type { TrackState } from "../geo";
 const SOURCE_ID = "storm-model-source";
 const LAYER_ID = "storm-model-layer";
 // 修改版本号可绕过浏览器、Service Worker 与 Mapbox worker 的模型缓存。
-const MODEL_URL = new URL("models/cloud.glb?v=cloud-opaque-v2", document.baseURI).href;
+const MODEL_URL = new URL("models/cloud.glb?v=cloud-effects-centered-v5", document.baseURI).href;
 const FIXED_MODEL_ROTATION: [number, number, number] = [0, 0, 0];
+const MODEL_ALTITUDE_METERS = 120_000;
 
 type ModelData = FeatureCollection<Point, { modelUri: string }>;
 
@@ -65,13 +66,14 @@ export class StormModelLayer {
             "model-type": "common-3d",
             // 原模型横向约 11 个单位；缩放后约 300 km，匹配台风云系而非建筑物尺度。
             "model-scale": [28_000, 28_000, 18_000],
+            // 将模型整体抬离地表，让云底向下延伸的雨滴和闪电不被地形遮挡。
+            "model-translation": [0, 0, MODEL_ALTITUDE_METERS],
             // 云团的枢轴已在 GLB 中归中；保持固定朝向，只随台风中心平移。
             "model-rotation": FIXED_MODEL_ROTATION,
-            // 完全使用白色覆盖原始底色，同时保留法线纹理形成的云层明暗。
-            "model-color": "#ffffff",
-            "model-color-mix-intensity": 1,
+            // 使用 GLB 内置的暖灰材质，避免颜色覆盖使云团重新变成纯白。
+            "model-color-mix-intensity": 0,
             "model-opacity": 1,
-            "model-emissive-strength": 0.2,
+            "model-emissive-strength": 0,
             "model-cast-shadows": false,
             "model-receive-shadows": false,
           },

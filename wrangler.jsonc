@@ -1,27 +1,25 @@
 {
-  "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "typhoon-bavi-tracker",
-  "main": "worker/index.ts",
-  "compatibility_date": "2026-05-03",
-  "workers_dev": true,
-  "routes": [
-    { "pattern": "chinaupdated.com", "custom_domain": true },
-    { "pattern": "www.chinaupdated.com", "custom_domain": true }
-  ],
-  "assets": {
-    "directory": "./dist",
-    "binding": "ASSETS"
-  },
-  "kv_namespaces": [
-    {
-      "binding": "NEWS_KV",
-      "id": "70c16e5a374146de89b52773783653f8"
-    }
-  ],
-  "triggers": {
-    "crons": ["*/5 * * * *"]
-  },
-  "observability": {
-    "enabled": true
-  }
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "typhoon-tracker-3d",
+	"main": "worker/index.ts",
+	"compatibility_date": "2026-05-03",
+	"workers_dev": true,
+	"assets": {
+		"directory": "./dist",
+		"binding": "ASSETS"
+	},
+	"kv_namespaces": [
+		{
+			"binding": "NEWS_KV",
+			"id": "6ec1fbfb12844c15ab2ae0c06a1726f5"
+		}
+	],
+	"triggers": {
+		"crons": [
+			"*/5 * * * *"
+		]
+	},
+	"observability": {
+		"enabled": true
+	}
 }
