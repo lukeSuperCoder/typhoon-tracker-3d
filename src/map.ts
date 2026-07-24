@@ -36,7 +36,7 @@ function markerShell(content: HTMLElement): HTMLElement {
  * 中文底图：高德卫星影像 + 透明中文注记（国内 CDN，行政边界符合中国标准）。
  * 不再使用 glyphs 字体服务，地图文字全部由注记瓦片与 DOM 标记承担。
  */
-const TOKENLESS_DEV_STYLE: mapboxgl.StyleSpecification = {
+const AMAP_SATELLITE_STYLE: mapboxgl.StyleSpecification = {
   version: 8,
   sources: {
     "amap-sat": {
@@ -106,17 +106,12 @@ export class TyphoonMap implements TyphoonScene {
 
   constructor(container: string) {
     const token = import.meta.env.VITE_MAPBOX_TOKEN?.trim();
-    if (!token) {
-      console.error("VITE_MAPBOX_TOKEN 未配置，当前使用 Mapbox 临时开发底图。");
-      queueMicrotask(() => showMapNotice("Mapbox Token 未配置，当前使用临时开发底图"));
-    }
     mapboxgl.accessToken = token ?? "";
 
     this.map = new mapboxgl.Map({
       container,
-      style: token
-        ? import.meta.env.VITE_MAPBOX_STYLE || "mapbox://styles/mapbox/standard-satellite"
-        : TOKENLESS_DEV_STYLE,
+      // 底图固定使用高德卫星影像与中文注记；Mapbox Token 仅用于可选 DEM 地形。
+      style: AMAP_SATELLITE_STYLE,
       projection: "globe",
       center: [138, 18],
       zoom: 3.5,
@@ -177,7 +172,7 @@ export class TyphoonMap implements TyphoonScene {
         });
         this.map.setTerrain({ source: "mapbox-dem", exaggeration: 1.12 });
       }
-      // Standard 样式切换会清空自定义 Source/Layer，按缓存状态完整恢复。
+      // 样式重新加载会清空自定义 Source/Layer，按缓存状态完整恢复。
       if (this.layersReady) {
         this.layersReady = false;
         this.setupLayers();
@@ -806,16 +801,6 @@ export class TyphoonMap implements TyphoonScene {
 /** Mapbox 场景统一创建入口。 */
 export function createTyphoonMap(container: string): TyphoonMap {
   return new TyphoonMap(container);
-}
-
-function showMapNotice(message: string): void {
-  if (document.getElementById("map-engine-notice")) return;
-  const notice = document.createElement("div");
-  notice.id = "map-engine-notice";
-  notice.setAttribute("role", "status");
-  notice.textContent = message;
-  document.body.appendChild(notice);
-  window.setTimeout(() => notice.remove(), 6000);
 }
 
 function segment(a: TrackPoint, b: TrackPoint): Feature {

@@ -91,7 +91,7 @@ git push -u origin main
 - Mapbox 独立分包（`manualChunks`），首屏与地图库并行加载
 - 台风 API `preload`，资讯面板延迟 2.5s 加载，不阻塞地图
 - 页面不可见时暂停动画循环，降低后台 CPU
-- Mapbox Standard Satellite 提供三维卫星底图、Globe 和大气层
+- 高德国内 CDN 提供卫星影像与中文注记，Mapbox GL JS 提供 Globe、大气层和可选 DEM 地形
 
 ## 本地开发
 
