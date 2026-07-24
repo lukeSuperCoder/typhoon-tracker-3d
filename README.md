@@ -8,7 +8,7 @@
 
 **线上访问：https://chinaupdated.com**
 
-<img width="1896" height="983" alt="截屏2026-07-11 23 07 51" src="https://github.com/user-attachments/assets/96b688f1-958c-4242-8b96-b0a9e557b674" />
+![截屏](image.png)
 
 
 
