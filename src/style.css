@@ -1202,12 +1202,27 @@ body.share-open { overflow: hidden; }
 #drawer-open {
   right: 0;
   display: flex;
+  justify-content: center;
   border-right: none;
   border-radius: var(--radius-md) 0 0 10px;
   padding: 9px 10px 9px 7px;
   writing-mode: horizontal-tb;
 }
 body.drawer-open #drawer-open { display: none; }
+
+/* 桌面端资讯折叠态：场景控制与资讯入口组成同一行，依次靠右排列。
+   固定资讯入口宽度后，场景按钮可稳定停在其左侧，不再随文字宽度互相覆盖。 */
+@media (min-width: 1100px) {
+  body:not(.drawer-open) #drawer-open {
+    top: 88px;
+    width: 82px;
+    min-height: 38px;
+  }
+  body:not(.drawer-open) .scene-controls {
+    top: 88px;
+    right: 92px;
+  }
+}
 
 /* 抽屉/HUD 展开或折叠时给时间轴与文案让位（大屏），两者独立叠加。
    偏移量是按面板宽度估算的经验值，不是精确计算——改了 #hud/#drawer 宽度记得回来同步：
